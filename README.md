@@ -2,9 +2,20 @@
 
 基于 **go-zero 微服务 + Nacos** 的 Docker 管理系统。各服务通过官方 Docker SDK 对接 Docker Engine API，开发阶段由 `mock-dockerd` 模拟 Docker daemon。要切到真实 Docker，只需把节点的 Docker API 地址改成真实地址，业务代码不用改。
 
-> 当前进度：gateway、user-rpc、node-rpc、container-rpc、image-rpc、mock-dockerd 已实现；Web UI 和部署脚本还没开发（下图虚线部分）。
+> 当前进度：gateway、user-rpc、node-rpc、container-rpc、image-rpc、mock-dockerd、Web UI（Vue3 + Element Plus）与 Docker Compose 部署脚本均已实现；本地直连模式全链路验证通过。
 
 ## 架构图
+
+![go-docker-manage 架构图](docs/architecture.svg)
+
+主要流程：
+- 浏览器经 Web UI 把 `/api` 请求交给 gateway，gateway 校验 JWT 后，用 gRPC 调用后面的服务。
+- container-rpc / image-rpc 本身不存数据：每次请求先向 node-rpc 查询目标节点的 Docker API 地址，再用 Docker SDK 直接调用该节点。
+- 节点地址可以指向 `mock-dockerd`（开发用），也可以指向真实的 dockerd。
+- 所有服务启动时把自己注册到 Nacos，并从 Nacos 拉取配置。不配置 Nacos 时，服务之间按 `Endpoints` 直连。
+
+<details>
+<summary>Mermaid 版本（可编辑源码）</summary>
 
 ```mermaid
 flowchart TB
@@ -57,6 +68,8 @@ flowchart TB
     class web,real todo
 ```
 
+</details>
+
 ### 调用链路示例：查看某节点的容器列表
 
 ```mermaid
@@ -88,7 +101,11 @@ pkg/
   errorx/          统一业务错误码
   zrpcx/           zrpc 客户端构造：启用 Nacos 走服务发现，否则直连
 examples/greeter/  最小 zrpc 微服务示例（服务端 + 客户端）
+docs/              架构图（architecture.svg）
 mock-dockerd/      Docker Engine API 模拟器（容器/镜像/日志/stats，可持久化为 JSON）
+web/               管理界面（Vue3 + Element Plus：仪表盘/节点/容器/镜像）
+deploy/            Dockerfile×3、nginx.conf、docker-compose.yml、nacos-init 配置导入
+scripts/           deploy.sh 一键部署、bootstrap-api.sh 初始化（建号/建节点）
 ```
 
 ## 快速开始
@@ -120,6 +137,24 @@ cd app/gateway       && go run . -f etc/gateway.yaml   # HTTP :8888
 | `GET /api/dashboard` | 节点 / 容器 / 镜像统计 |
 
 mock-dockerd 兼容 docker CLI，可以直接用来验证：`docker -H tcp://127.0.0.1:2375 ps -a`。
+
+前端开发模式：`cd web && npm install && npm run dev`（:5173，`/api` 代理到本地 gateway）。
+
+## 部署到 192.168.112.138（Docker Compose）
+
+```bash
+bash scripts/deploy.sh     # rsync 源码 → 服务器 compose build/up → 自动初始化
+```
+
+启动内容：Nacos（standalone，derby 内嵌存储）+ nacos-init（向配置中心导入 5 个 dataId）+
+mock-dockerd + 4 个 rpc 服务 + gateway + web，SQLite / Nacos / mock 状态均挂 Docker volume。
+
+- Web UI：<http://192.168.112.138/>（admin / admin123，首次部署脚本会自动创建）
+- API：<http://192.168.112.138:8888/api/health>
+- Nacos 控制台：<http://192.168.112.138:8848/nacos>（nacos/nacos）
+
+容器部署时通过环境变量 `GDM_NACOS_HOST=nacos` 注入注册中心地址；服务启动时先从配置中心
+拉取同名 dataId（`deploy/nacos-init/configs/`），拉不到则用镜像内的本地配置。
 
 ## 配置与 Nacos
 

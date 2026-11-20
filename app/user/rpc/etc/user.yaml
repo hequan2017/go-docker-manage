@@ -13,3 +13,7 @@ Nacos:
 
 DB:
   Path: data/user.db
+
+# 日志输出到 stdout(docker logs 查看)
+Log:
+  Mode: console

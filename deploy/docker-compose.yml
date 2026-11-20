@@ -1,0 +1,139 @@
+name: go-docker-manage
+
+# 基础设施:Nacos(注册中心+配置中心)+ 模拟 Docker daemon
+services:
+  nacos:
+    image: nacos/nacos-server:v2.5.1
+    container_name: gdm-nacos
+    environment:
+      - MODE=standalone
+      - NACOS_AUTH_ENABLE=false
+      - JVM_XMS=256m
+      - JVM_XMX=256m
+      - JVM_XMN=96m
+    ports:
+      - "8848:8848"   # HTTP(控制台/OpenAPI)
+      - "9848:9848"   # SDK gRPC
+    volumes:
+      - nacos-logs:/home/nacos/logs
+      - nacos-data:/home/nacos/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8848/nacos/v1/console/health/readiness || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 15s
+    restart: unless-stopped
+
+  # 一次性任务:Nacos 就绪后导入各服务配置(配置中心)
+  nacos-init:
+    image: curlimages/curl:8.11.1
+    depends_on:
+      nacos:
+        condition: service_healthy
+    volumes:
+      - ./nacos-init/init.sh:/init.sh:ro
+      - ./nacos-init/configs:/configs:ro
+    entrypoint: ["/bin/sh", "/init.sh"]
+    restart: "no"
+
+  # 模拟 Docker daemon(当前对接目标;接真实节点时在 UI 中改节点地址即可)
+  mock-dockerd:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.mock
+    container_name: gdm-mock-dockerd
+    ports:
+      - "2375:2375"
+    volumes:
+      - mock-data:/app/data
+    restart: unless-stopped
+
+  # ---------- 微服务 ----------
+  user-rpc:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.svc
+      args: { SVC: app/user/rpc }
+    environment: &svc-env
+      - GDM_NACOS_HOST=nacos
+      - GDM_NACOS_PORT=8848
+    command: ["-f", "etc/user.yaml"]
+    volumes:
+      - user-data:/app/data
+    depends_on:
+      nacos-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  node-rpc:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.svc
+      args: { SVC: app/node/rpc }
+    environment: *svc-env
+    command: ["-f", "etc/node.yaml"]
+    volumes:
+      - node-data:/app/data
+    depends_on:
+      nacos-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  container-rpc:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.svc
+      args: { SVC: app/container/rpc }
+    environment: *svc-env
+    command: ["-f", "etc/container.yaml"]
+    depends_on:
+      nacos-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  image-rpc:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.svc
+      args: { SVC: app/image/rpc }
+    environment: *svc-env
+    command: ["-f", "etc/image.yaml"]
+    depends_on:
+      nacos-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.svc
+      args: { SVC: app/gateway }
+    environment: *svc-env
+    command: ["-f", "etc/gateway.yaml"]
+    ports:
+      - "8888:8888"
+    depends_on:
+      nacos-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # ---------- Web UI ----------
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+      args:
+        NPM_REGISTRY: https://registry.npmmirror.com
+    ports:
+      - "8180:80"
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+volumes:
+  nacos-logs:
+  nacos-data:
+  mock-data:
+  user-data:
+  node-data:

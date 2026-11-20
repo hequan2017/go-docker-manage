@@ -33,3 +33,7 @@ Upstreams:
     Target: nacos://image-rpc
     Endpoints: ["127.0.0.1:9003"]
     Timeout: 30000
+
+# 日志输出到 stdout(docker logs 查看)
+Log:
+  Mode: console

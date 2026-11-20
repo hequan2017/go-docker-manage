@@ -382,81 +382,78 @@ func handleContainerStats(s *store, w http.ResponseWriter, r *http.Request, ref 
 		return
 	}
 	stream := r.URL.Query().Get("stream") == "1"
-	now := time.Now()
-
-	var body []map[string]any
-	func() {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		body = append(body, c.statsSnapshot(now.Add(-time.Second), now))
-		if stream {
-			// 简化实现:额外输出一个采样点后结束(follow 场景由 SDK 读到 EOF)
-			body = append(body, c.statsSnapshot(now, now.Add(time.Second)))
-		}
-	}()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	enc := json.NewEncoder(w)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_ = enc.Encode(c.statsSnapshot(time.Now()))
 	if stream {
-		for _, b := range body {
-			_ = enc.Encode(b)
-		}
-	} else {
-		_ = enc.Encode(body[0])
+		// 简化实现:额外输出一个采样点后结束(连续流场景由 SDK 读到 EOF)
+		_ = enc.Encode(c.statsSnapshot(time.Now()))
 	}
 }
 
-// statsSnapshot 生成一次 v1 StatsJSON 采样(cpu/mem 在基线上随机波动)
-func (c *mContainer) statsSnapshot(pre, cur time.Time) map[string]any {
+// statsSnapshot 生成一次 v1 StatsJSON 采样。
+// CPU 采用单调递增计数器:cur = prev + pct/100 * dt * 1e9,
+// 系统计数按 4 核满载递增,客户端 (Δcpu/Δsys)*cores*100 即还原出 pct。
+func (c *mContainer) statsSnapshot(cur time.Time) map[string]any {
 	rng := rand.New(rand.NewSource(cur.UnixNano() + int64(len(c.ID))))
 	running := c.State == stateRunning || c.State == statePaused
 
-	cpuNow := c.cpuBase * (0.7 + rng.Float64()*0.6) // 百分比
-	memNow := c.memBase * (0.8 + rng.Float64()*0.4)
-	var cpuPre float64
-	if pre.After(c.Created) {
-		cpuPre = c.cpuBase * (0.7 + rng.Float64()*0.6)
+	const cores = 4
+	pct := 0.0 // 单核占用百分比
+	if running {
+		pct = c.cpuBase * (0.7 + rng.Float64()*0.6)
 	}
-	if !running {
-		cpuNow, cpuPre, memNow = 0, 0, 0
+	if c.lastSample.IsZero() {
+		c.lastSample = cur.Add(-time.Second)
+		c.lastTotal = uint64(pct / 100 * 1e9)
+		c.lastSystem = uint64(cores * 1e9)
 	}
-	hz := 100.0
-	totalUsage := cpuNow / 100.0 * hz * float64(cur.UnixNano()) / 1e9 * 1e6
-	preUsage := cpuPre / 100.0 * hz * float64(pre.UnixNano()) / 1e9 * 1e6
-	systemUsage := float64(cur.UnixNano()) / 1e6 * 4 // 4 核累计
-	preSystem := float64(pre.UnixNano()) / 1e6 * 4
+	dt := cur.Sub(c.lastSample).Seconds()
+	if dt <= 0 {
+		dt = 1
+	}
+	preTotal, preSystem := c.lastTotal, c.lastSystem
+	c.lastTotal += uint64(pct / 100 * dt * 1e9)
+	c.lastSystem += uint64(cores * dt * 1e9)
+	c.lastSample = cur
 
+	memNow := c.memBase * (0.8 + rng.Float64()*0.4)
+	if !running {
+		memNow = 0
+	}
 	netRx := uint64(memNow / 10)
 	netTx := uint64(memNow / 25)
 
 	snap := map[string]any{
-		"read":    cur.UTC().Format(time.RFC3339Nano),
-		"preread": pre.UTC().Format(time.RFC3339Nano),
-		"pids_stats": map[string]any{
-			"current": map[bool]int{true: 3 + rng.Intn(40), false: 0}[running],
-		},
-		"blkio_stats": map[string]any{"io_service_bytes_recursive": nil},
-		"num_procs":   0,
+		"read":          cur.UTC().Format(time.RFC3339Nano),
+		"preread":       cur.Add(-time.Duration(dt * float64(time.Second))).UTC().Format(time.RFC3339Nano),
+		"pids_stats":    map[string]any{"current": map[bool]int{true: 3 + rng.Intn(40), false: 0}[running]},
+		"blkio_stats":   map[string]any{"io_service_bytes_recursive": nil},
+		"num_procs":     0,
 		"storage_stats": map[string]any{},
 		"cpu_stats": map[string]any{
 			"cpu_usage": map[string]any{
-				"total_usage":       uint64(totalUsage),
-				"usage_in_kernelmode": uint64(totalUsage * 0.15),
-				"usage_in_usermode":  uint64(totalUsage * 0.85),
+				"total_usage":        c.lastTotal,
+				"usage_in_kernelmode": uint64(float64(c.lastTotal) * 0.15),
+				"usage_in_usermode":   uint64(float64(c.lastTotal) * 0.85),
 			},
-			"system_cpu_usage": uint64(systemUsage),
-			"online_cpus":      4,
+			"system_cpu_usage": c.lastSystem,
+			"online_cpus":      cores,
 			"throttling_data":  map[string]any{"periods": 0, "throttled_periods": 0, "throttled_time": 0},
 		},
 		"precpu_stats": map[string]any{
 			"cpu_usage": map[string]any{
-				"total_usage":        uint64(preUsage),
-				"usage_in_kernelmode": uint64(preUsage * 0.15),
-				"usage_in_usermode":   uint64(preUsage * 0.85),
+				"total_usage":        preTotal,
+				"usage_in_kernelmode": uint64(float64(preTotal) * 0.15),
+				"usage_in_usermode":   uint64(float64(preTotal) * 0.85),
 			},
-			"system_cpu_usage": uint64(preSystem),
-			"online_cpus":      4,
+			"system_cpu_usage": preSystem,
+			"online_cpus":      cores,
 			"throttling_data":  map[string]any{"periods": 0, "throttled_periods": 0, "throttled_time": 0},
 		},
 		"memory_stats": map[string]any{

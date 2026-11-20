@@ -1,0 +1,11 @@
+# dataId: user-rpc.yaml —— 由配置中心下发
+Name: user-rpc
+ListenOn: 0.0.0.0:9000
+
+Nacos:
+  Host: nacos
+  Port: 8848
+  Group: DEFAULT_GROUP
+
+DB:
+  Path: data/user.db

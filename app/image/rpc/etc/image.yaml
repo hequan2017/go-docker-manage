@@ -15,3 +15,7 @@ NodeRpc:
   Endpoints:
     - 127.0.0.1:9001
   Timeout: 5000
+
+# 日志输出到 stdout(docker logs 查看)
+Log:
+  Mode: console

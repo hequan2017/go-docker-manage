@@ -1,0 +1,11 @@
+# dataId: node-rpc.yaml —— 由配置中心下发
+Name: node-rpc
+ListenOn: 0.0.0.0:9001
+
+Nacos:
+  Host: nacos
+  Port: 8848
+  Group: DEFAULT_GROUP
+
+DB:
+  Path: data/node.db

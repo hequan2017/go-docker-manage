@@ -23,6 +23,7 @@ func main() {
 
 	var c config.Config
 	conf.MustLoad(*configFile, &c)
+	c.Nacos.OverrideFromEnv()
 	nacosx.MustLoadRemote(c.Nacos, c.Name, &c)
 
 	ctx := svc.NewServiceContext(c)

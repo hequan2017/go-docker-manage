@@ -5,6 +5,9 @@
 package nacosx
 
 import (
+	"os"
+	"strconv"
+
 	"github.com/nacos-group/nacos-sdk-go/v2/clients"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/config_client"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/naming_client"
@@ -28,6 +31,32 @@ type Config struct {
 
 // Empty 未配置 Nacos(Host 为空)时,注册/发现/配置中心功能全部停用
 func (c Config) Empty() bool { return c.Host == "" }
+
+// OverrideFromEnv 用环境变量覆盖 Nacos 连接配置(容器部署注入):
+// GDM_NACOS_HOST / GDM_NACOS_PORT / GDM_NACOS_NAMESPACE / GDM_NACOS_GROUP /
+// GDM_NACOS_USER / GDM_NACOS_PASS
+func (c *Config) OverrideFromEnv() {
+	if v := os.Getenv("GDM_NACOS_HOST"); v != "" {
+		c.Host = v
+	}
+	if v := os.Getenv("GDM_NACOS_PORT"); v != "" {
+		if p, err := strconv.ParseUint(v, 10, 16); err == nil {
+			c.Port = p
+		}
+	}
+	if v := os.Getenv("GDM_NACOS_NAMESPACE"); v != "" {
+		c.NamespaceId = v
+	}
+	if v := os.Getenv("GDM_NACOS_GROUP"); v != "" {
+		c.Group = v
+	}
+	if v := os.Getenv("GDM_NACOS_USER"); v != "" {
+		c.Username = v
+	}
+	if v := os.Getenv("GDM_NACOS_PASS"); v != "" {
+		c.Password = v
+	}
+}
 
 func (c Config) serverConfigs() []constant.ServerConfig {
 	return []constant.ServerConfig{{

@@ -1,0 +1,19 @@
+# mock-dockerd:模拟 Docker daemon
+FROM golang:1.26-alpine AS builder
+ARG GOPROXY=https://goproxy.cn,direct
+ENV CGO_ENABLED=0 GOOS=linux
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY pkg ./pkg
+COPY mock-dockerd ./mock-dockerd
+RUN go build -trimpath -ldflags="-s -w" -o /out/mock-dockerd ./mock-dockerd
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 10001 app
+WORKDIR /app
+COPY --from=builder /out/mock-dockerd ./mock-dockerd
+RUN mkdir -p /app/data && chown -R app /app
+USER app
+VOLUME /app/data
+ENTRYPOINT ["./mock-dockerd", "-addr", ":2375", "-data", "/app/data/state.json"]

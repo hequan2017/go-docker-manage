@@ -49,6 +49,11 @@ type mContainer struct {
 	cpuBase float64 `json:"-"`
 	memBase float64 `json:"-"` // 字节
 
+	// 单调递增的 CPU 计数器(保证 pre/cur 差值为正,CPU% 可算)
+	lastTotal  uint64    `json:"-"` // 累计 CPU 时间 ns
+	lastSystem uint64    `json:"-"` // 累计系统 CPU 时间 ns
+	lastSample time.Time `json:"-"`
+
 	mu        sync.Mutex `json:"-"`
 	logLines  []logLine  `json:"-"`
 }

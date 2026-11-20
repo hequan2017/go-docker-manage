@@ -9,6 +9,10 @@ bin/
 *.out
 coverage.*
 
+# 前端
+web/node_modules/
+web/dist/
+
 # 运行时数据：SQLite 库、mock-dockerd 持久化状态、日志
 data/
 *.db

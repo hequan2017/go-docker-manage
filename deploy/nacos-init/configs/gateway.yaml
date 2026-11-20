@@ -1,0 +1,27 @@
+# dataId: gateway.yaml —— 由配置中心下发
+Name: gateway
+Host: 0.0.0.0
+Port: 8888
+
+Auth:
+  AccessSecret: "gdm-jwt-secret-change-me-in-production"
+  AccessExpire: 86400
+
+Nacos:
+  Host: nacos
+  Port: 8848
+  Group: DEFAULT_GROUP
+
+Upstreams:
+  UserRpc:
+    Target: nacos://user-rpc
+    Timeout: 5000
+  NodeRpc:
+    Target: nacos://node-rpc
+    Timeout: 5000
+  ContainerRpc:
+    Target: nacos://container-rpc
+    Timeout: 8000
+  ImageRpc:
+    Target: nacos://image-rpc
+    Timeout: 30000

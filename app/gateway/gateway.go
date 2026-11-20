@@ -26,6 +26,7 @@ func main() {
 
 	var c config.Config
 	conf.MustLoad(*configFile, &c)
+	c.Nacos.OverrideFromEnv()
 	nacosx.MustLoadRemote(c.Nacos, c.Name, &c)
 
 	server := rest.MustNewServer(c.RestConf)

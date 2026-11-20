@@ -23,6 +23,7 @@ func main() {
 
 	var c config.Config
 	conf.MustLoad(*configFile, &c)
+	c.Nacos.OverrideFromEnv()
 	// Nacos 配置中心:远程 <Name>.yaml 覆盖本地配置(未启用时保持本地)
 	nacosx.MustLoadRemote(c.Nacos, c.Name, &c)
 

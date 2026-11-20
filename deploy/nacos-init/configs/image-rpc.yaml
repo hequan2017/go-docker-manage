@@ -1,0 +1,12 @@
+# dataId: image-rpc.yaml —— 由配置中心下发
+Name: image-rpc
+ListenOn: 0.0.0.0:9003
+
+Nacos:
+  Host: nacos
+  Port: 8848
+  Group: DEFAULT_GROUP
+
+NodeRpc:
+  Target: nacos://node-rpc
+  Timeout: 5000
