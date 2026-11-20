@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package node;
+
+option go_package = "github.com/hequan2017/go-docker-manage/app/node/rpc/pb;pb";
+
+message NodeInfo {
+  int64 id = 1;
+  string name = 2;
+  string host = 3;
+  string docker_api_url = 4; // tcp://host:2375 或 unix:///var/run/docker.sock
+  string status = 5;         // healthy / unhealthy / unknown
+  string description = 6;
+  string created_at = 7;
+}
+
+message CreateNodeReq {
+  string name = 1;
+  string host = 2;
+  string docker_api_url = 3;
+  string description = 4;
+}
+
+message CreateNodeReply {
+  int64 id = 1;
+}
+
+message ListNodesReq {}
+
+message ListNodesReply {
+  repeated NodeInfo nodes = 1;
+}
+
+message GetNodeReq {
+  int64 id = 1;
+}
+
+message GetNodeReply {
+  NodeInfo node = 1;
+}
+
+message DeleteNodeReq {
+  int64 id = 1;
+}
+
+message DeleteNodeReply {}
+
+message HealthCheckReq {
+  int64 id = 1;
+}
+
+message HealthCheckReply {
+  bool ok = 1;
+  string message = 2;
+  string docker_version = 3;
+}
+
+service Node {
+  rpc CreateNode(CreateNodeReq) returns (CreateNodeReply);
+  rpc ListNodes(ListNodesReq) returns (ListNodesReply);
+  rpc GetNode(GetNodeReq) returns (GetNodeReply);
+  rpc DeleteNode(DeleteNodeReq) returns (DeleteNodeReply);
+  rpc HealthCheck(HealthCheckReq) returns (HealthCheckReply);
+}

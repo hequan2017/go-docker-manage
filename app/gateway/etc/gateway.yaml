@@ -1,0 +1,35 @@
+# gateway 本地 bootstrap 配置(Nacos 用法同 user-rpc)
+Name: gateway
+Host: 0.0.0.0
+Port: 8888
+
+Auth:
+  AccessSecret: "gdm-jwt-secret-change-me-in-production"
+  AccessExpire: 86400
+
+Nacos:
+  Host: ""
+  Port: 8848
+  NamespaceId: ""
+  Group: DEFAULT_GROUP
+  Username: ""
+  Password: ""
+
+# 下游微服务:启用 Nacos 时用 Target 服务发现,否则 Endpoints 直连
+Upstreams:
+  UserRpc:
+    Target: nacos://user-rpc
+    Endpoints: ["127.0.0.1:9000"]
+    Timeout: 5000
+  NodeRpc:
+    Target: nacos://node-rpc
+    Endpoints: ["127.0.0.1:9001"]
+    Timeout: 5000
+  ContainerRpc:
+    Target: nacos://container-rpc
+    Endpoints: ["127.0.0.1:9002"]
+    Timeout: 8000
+  ImageRpc:
+    Target: nacos://image-rpc
+    Endpoints: ["127.0.0.1:9003"]
+    Timeout: 30000

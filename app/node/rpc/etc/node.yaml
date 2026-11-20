@@ -1,0 +1,14 @@
+# node-rpc 本地 bootstrap 配置(Nacos 用法同 user-rpc)
+Name: node-rpc
+ListenOn: 0.0.0.0:9001
+
+Nacos:
+  Host: ""
+  Port: 8848
+  NamespaceId: ""
+  Group: DEFAULT_GROUP
+  Username: ""
+  Password: ""
+
+DB:
+  Path: data/node.db

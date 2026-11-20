@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package image;
+
+option go_package = "github.com/hequan2017/go-docker-manage/app/image/rpc/pb;pb";
+
+message ImageInfo {
+  string id = 1; // sha256:...
+  repeated string repo_tags = 2;
+  int64 created = 3; // unix 秒
+  int64 size = 4;    // 字节
+}
+
+message ListImagesReq {
+  int64 node_id = 1;
+}
+
+message ListImagesReply {
+  repeated ImageInfo images = 1;
+}
+
+message PullImageReq {
+  int64 node_id = 1;
+  string ref = 2; // nginx:alpine
+}
+
+message PullImageReply {
+  string status = 1; // 拉取结果描述
+}
+
+message RemoveImageReq {
+  int64 node_id = 1;
+  string image_ref = 2; // 镜像 ID 或 repo:tag
+  bool force = 3;
+}
+
+message RemoveImageReply {
+  repeated string deleted = 1; // 解除标签/删除的层
+}
+
+service Image {
+  rpc ListImages(ListImagesReq) returns (ListImagesReply);
+  rpc PullImage(PullImageReq) returns (PullImageReply);
+  rpc RemoveImage(RemoveImageReq) returns (RemoveImageReply);
+}

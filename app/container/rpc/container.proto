@@ -1,0 +1,104 @@
+syntax = "proto3";
+
+package container;
+
+option go_package = "github.com/hequan2017/go-docker-manage/app/container/rpc/pb;pb";
+
+message PortInfo {
+  string ip = 1;
+  uint32 private_port = 2;
+  uint32 public_port = 3;
+  string type = 4; // tcp / udp / sctp
+}
+
+message ContainerSummary {
+  string id = 1;
+  repeated string names = 2;
+  string image = 3;
+  string image_id = 4;
+  string command = 5;
+  int64 created = 6; // unix 秒
+  repeated PortInfo ports = 7;
+  string state = 8;  // created / running / paused / exited / dead
+  string status = 9; // "Up 2 minutes" / "Exited (0) 5 minutes ago"
+}
+
+message ListContainersReq {
+  int64 node_id = 1;
+  bool all = 2;
+}
+
+message ListContainersReply {
+  repeated ContainerSummary containers = 1;
+}
+
+message ContainerActionReq {
+  int64 node_id = 1;
+  string container_id = 2;
+  string action = 3; // start / stop / restart
+}
+
+message ContainerActionReply {
+  bool ok = 1;
+  string message = 2;
+}
+
+message RemoveContainerReq {
+  int64 node_id = 1;
+  string container_id = 2;
+  bool force = 3;
+}
+
+message RemoveContainerReply {}
+
+message PortBinding {
+  string host_port = 1;      // 宿主机端口,如 "8080"
+  string container_port = 2; // 容器端口,如 "80"
+  string protocol = 3;       // tcp / udp,默认 tcp
+}
+
+message CreateContainerReq {
+  int64 node_id = 1;
+  string name = 2;
+  string image = 3; // 如 nginx:alpine
+  repeated string env = 4;
+  repeated PortBinding ports = 5;
+}
+
+message CreateContainerReply {
+  string container_id = 1;
+}
+
+message ContainerLogsReq {
+  int64 node_id = 1;
+  string container_id = 2;
+  int64 tail = 3; // 0 = 全部
+  bool timestamps = 4;
+}
+
+message ContainerLogsReply {
+  string logs = 1;
+}
+
+message ContainerStatsReq {
+  int64 node_id = 1;
+  string container_id = 2;
+}
+
+message ContainerStatsReply {
+  double cpu_percent = 1;
+  double mem_usage_mb = 2;
+  double mem_limit_mb = 3;
+  double net_rx_mb = 4;
+  double net_tx_mb = 5;
+  int64 pids = 6;
+}
+
+service Container {
+  rpc ListContainers(ListContainersReq) returns (ListContainersReply);
+  rpc ContainerAction(ContainerActionReq) returns (ContainerActionReply);
+  rpc RemoveContainer(RemoveContainerReq) returns (RemoveContainerReply);
+  rpc CreateContainer(CreateContainerReq) returns (CreateContainerReply);
+  rpc ContainerLogs(ContainerLogsReq) returns (ContainerLogsReply);
+  rpc ContainerStats(ContainerStatsReq) returns (ContainerStatsReply);
+}

@@ -1,0 +1,18 @@
+# container-rpc 本地 bootstrap 配置(Nacos 用法同 user-rpc)
+Name: container-rpc
+ListenOn: 0.0.0.0:9002
+
+Nacos:
+  Host: ""
+  Port: 8848
+  NamespaceId: ""
+  Group: DEFAULT_GROUP
+  Username: ""
+  Password: ""
+
+# 节点服务上游:启用 Nacos 时用 Target,否则 Endpoints 直连
+NodeRpc:
+  Target: nacos://node-rpc
+  Endpoints:
+    - 127.0.0.1:9001
+  Timeout: 5000

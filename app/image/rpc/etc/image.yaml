@@ -1,0 +1,17 @@
+# image-rpc 本地 bootstrap 配置(Nacos 用法同 user-rpc)
+Name: image-rpc
+ListenOn: 0.0.0.0:9003
+
+Nacos:
+  Host: ""
+  Port: 8848
+  NamespaceId: ""
+  Group: DEFAULT_GROUP
+  Username: ""
+  Password: ""
+
+NodeRpc:
+  Target: nacos://node-rpc
+  Endpoints:
+    - 127.0.0.1:9001
+  Timeout: 5000

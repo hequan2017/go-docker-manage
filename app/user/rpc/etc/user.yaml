@@ -1,0 +1,15 @@
+# user-rpc 本地 bootstrap 配置
+# Nacos.Host 非空时:注册中心自动启用;并尝试从配置中心拉取 dataId=user-rpc.yaml 覆盖下面的业务配置
+Name: user-rpc
+ListenOn: 0.0.0.0:9000
+
+Nacos:
+  Host: ""          # 部署环境填 Nacos 地址,如 192.168.112.138;本地直连调试留空
+  Port: 8848
+  NamespaceId: ""
+  Group: DEFAULT_GROUP
+  Username: ""
+  Password: ""
+
+DB:
+  Path: data/user.db
