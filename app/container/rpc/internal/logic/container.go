@@ -11,10 +11,12 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/hequan2017/go-docker-manage/app/container/rpc/internal/svc"
 	"github.com/hequan2017/go-docker-manage/app/container/rpc/pb"
+	"github.com/hequan2017/go-docker-manage/app/node/rpc/nodeclient"
 	nodepb "github.com/hequan2017/go-docker-manage/app/node/rpc/pb"
 	"github.com/hequan2017/go-docker-manage/pkg/dockerx"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -32,30 +34,23 @@ func NewContainerLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Contain
 	return &ContainerLogic{ctx: ctx, svcCtx: svcCtx, Logger: logx.WithContext(ctx)}
 }
 
-// nodeOf 查询节点信息
-func (l *ContainerLogic) nodeOf(nodeId int64) (*nodepb.NodeInfo, error) {
-	resp, err := l.svcCtx.NodeCli.GetNode(l.ctx, &nodepb.GetNodeReq{Id: nodeId})
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "节点不存在: %s", grpcMessage(err))
-	}
-	return resp.Node, nil
+// docker 查询节点并返回其 Docker 客户端(错误已转为 gRPC status)
+func (l *ContainerLogic) docker(nodeId int64) (*nodepb.NodeInfo, *client.Client, error) {
+	return nodeclient.Docker(l.ctx, l.svcCtx.NodeCli, nodeId)
 }
 
-func grpcMessage(err error) string {
-	if st, ok := status.FromError(err); ok {
-		return st.Message()
+// shortID 截取容器 ID 前 12 位用于展示;入参也可能是容器名或短 ID,不足 12 位原样返回
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
 	}
-	return err.Error()
+	return id
 }
 
 func (l *ContainerLogic) ListContainers(in *pb.ListContainersReq) (*pb.ListContainersReply, error) {
-	resp, err := l.nodeOf(in.NodeId)
+	_, cli, err := l.docker(in.NodeId)
 	if err != nil {
 		return nil, err
-	}
-	cli, err := dockerx.New(resp.DockerApiUrl)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "Docker API 地址无效: %v", err)
 	}
 	list, err := cli.ContainerList(l.ctx, container.ListOptions{All: in.All})
 	if err != nil {
@@ -87,13 +82,9 @@ func (l *ContainerLogic) ListContainers(in *pb.ListContainersReq) (*pb.ListConta
 }
 
 func (l *ContainerLogic) ContainerAction(in *pb.ContainerActionReq) (*pb.ContainerActionReply, error) {
-	node, err := l.nodeOf(in.NodeId)
+	_, cli, err := l.docker(in.NodeId)
 	if err != nil {
 		return nil, err
-	}
-	cli, err := dockerx.New(node.DockerApiUrl)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "Docker API 地址无效: %v", err)
 	}
 	var actionErr error
 	switch in.Action {
@@ -107,34 +98,26 @@ func (l *ContainerLogic) ContainerAction(in *pb.ContainerActionReq) (*pb.Contain
 		return nil, status.Errorf(codes.InvalidArgument, "不支持的动作 %q(可选 start/stop/restart)", in.Action)
 	}
 	if actionErr != nil {
-		return nil, wrapDockerErr(actionErr)
+		return nil, dockerx.ToStatus(actionErr)
 	}
-	return &pb.ContainerActionReply{Ok: true, Message: "容器 " + in.ContainerId[:12] + " " + in.Action + " 完成"}, nil
+	return &pb.ContainerActionReply{Ok: true, Message: "容器 " + shortID(in.ContainerId) + " " + in.Action + " 完成"}, nil
 }
 
 func (l *ContainerLogic) RemoveContainer(in *pb.RemoveContainerReq) (*pb.RemoveContainerReply, error) {
-	node, err := l.nodeOf(in.NodeId)
+	_, cli, err := l.docker(in.NodeId)
 	if err != nil {
 		return nil, err
 	}
-	cli, err := dockerx.New(node.DockerApiUrl)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "Docker API 地址无效: %v", err)
-	}
 	if err := cli.ContainerRemove(l.ctx, in.ContainerId, container.RemoveOptions{Force: in.Force}); err != nil {
-		return nil, wrapDockerErr(err)
+		return nil, dockerx.ToStatus(err)
 	}
 	return &pb.RemoveContainerReply{}, nil
 }
 
 func (l *ContainerLogic) CreateContainer(in *pb.CreateContainerReq) (*pb.CreateContainerReply, error) {
-	node, err := l.nodeOf(in.NodeId)
+	node, cli, err := l.docker(in.NodeId)
 	if err != nil {
 		return nil, err
-	}
-	cli, err := dockerx.New(node.DockerApiUrl)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "Docker API 地址无效: %v", err)
 	}
 
 	cfg := &container.Config{
@@ -160,20 +143,16 @@ func (l *ContainerLogic) CreateContainer(in *pb.CreateContainerReq) (*pb.CreateC
 
 	resp, err := cli.ContainerCreate(l.ctx, cfg, hostCfg, &network.NetworkingConfig{}, nil, in.Name)
 	if err != nil {
-		return nil, wrapDockerErr(err)
+		return nil, dockerx.ToStatus(err)
 	}
-	l.Infof("container %s created on node %s (image=%s)", resp.ID[:12], node.Name, in.Image)
+	l.Infof("container %s created on node %s (image=%s)", shortID(resp.ID), node.Name, in.Image)
 	return &pb.CreateContainerReply{ContainerId: resp.ID}, nil
 }
 
 func (l *ContainerLogic) ContainerLogs(in *pb.ContainerLogsReq) (*pb.ContainerLogsReply, error) {
-	node, err := l.nodeOf(in.NodeId)
+	_, cli, err := l.docker(in.NodeId)
 	if err != nil {
 		return nil, err
-	}
-	cli, err := dockerx.New(node.DockerApiUrl)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "Docker API 地址无效: %v", err)
 	}
 	tail := "all"
 	if in.Tail > 0 {
@@ -186,7 +165,7 @@ func (l *ContainerLogic) ContainerLogs(in *pb.ContainerLogsReq) (*pb.ContainerLo
 		Timestamps: in.Timestamps,
 	})
 	if err != nil {
-		return nil, wrapDockerErr(err)
+		return nil, dockerx.ToStatus(err)
 	}
 	defer reader.Close()
 
@@ -198,17 +177,13 @@ func (l *ContainerLogic) ContainerLogs(in *pb.ContainerLogsReq) (*pb.ContainerLo
 }
 
 func (l *ContainerLogic) ContainerStats(in *pb.ContainerStatsReq) (*pb.ContainerStatsReply, error) {
-	node, err := l.nodeOf(in.NodeId)
+	_, cli, err := l.docker(in.NodeId)
 	if err != nil {
 		return nil, err
 	}
-	cli, err := dockerx.New(node.DockerApiUrl)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "Docker API 地址无效: %v", err)
-	}
 	resp, err := cli.ContainerStats(l.ctx, in.ContainerId, false)
 	if err != nil {
-		return nil, wrapDockerErr(err)
+		return nil, dockerx.ToStatus(err)
 	}
 	defer resp.Body.Close()
 	var v container.StatsResponse
@@ -237,34 +212,4 @@ func (l *ContainerLogic) ContainerStats(in *pb.ContainerStatsReq) (*pb.Container
 		reply.CpuPercent = cpuDelta / sysDelta * float64(cpus) * 100
 	}
 	return reply, nil
-}
-
-// wrapDockerErr 将 docker SDK 错误(404/409 等)转成 gRPC 状态码
-func wrapDockerErr(err error) error {
-	msg := err.Error()
-	// docker SDK 错误已带 "Error response from daemon: ..." 前缀
-	switch {
-	case isDockerNotFound(err):
-		return status.Error(codes.NotFound, msg)
-	case isDockerConflict(err):
-		return status.Error(codes.FailedPrecondition, msg)
-	default:
-		return status.Error(codes.Unavailable, msg)
-	}
-}
-
-func isDockerNotFound(err error) bool {
-	type notFounds interface{ NotFound() bool }
-	if e, ok := err.(notFounds); ok {
-		return e.NotFound()
-	}
-	return false
-}
-
-func isDockerConflict(err error) bool {
-	type conflicts interface{ Conflict() bool }
-	if e, ok := err.(conflicts); ok {
-		return e.Conflict()
-	}
-	return false
 }

@@ -47,9 +47,9 @@ gateway :8888 (REST, JWT) ──gRPC──▶ user-rpc :9000  (SQLite)
 
 ### Nacos integration (`pkg/nacosx`) and the "Nacos optional" pattern
 Each service's `main.go` repeats the same bootstrap. Follow it for new services:
-1. `conf.MustLoad` the local `etc/<svc>.yaml`. It holds only bootstrap info (Name, ListenOn, Nacos address).
+1. `conf.MustLoad` the local `etc/<svc>.yaml`. It holds only bootstrap info (Name, ListenOn, Nacos address). Then `c.Nacos.OverrideFromEnv()` lets container deployments inject the Nacos address through environment variables.
 2. `nacosx.MustLoadRemote(c.Nacos, c.Name, &c)` pulls the Nacos config dataId named after the service (`node-rpc`, etc.) and overlays it on the local config.
-3. After `zrpc.MustNewServer`, if Nacos is enabled, register the instance with `RegisterService` (local IP + port parsed from ListenOn) and `defer DeregisterService`.
+3. After `zrpc.MustNewServer`, call `deregister := nacosx.MustRegister(c.Nacos, c.Name, c.ListenOn)` and `defer deregister()`. It is a no-op when Nacos is disabled.
 
 `nacosx.Config.Empty()` (Host == "") turns all Nacos features off. The local yaml files ship with `Host: ""`, so services run standalone on direct endpoints by default.
 
@@ -57,11 +57,21 @@ Upstream clients are built with `pkg/zrpcx.NewClient(upstream, nacosCfg)`. With 
 
 ### Docker access
 - `pkg/dockerx.New(addr)` returns a Docker SDK client cached per address, with API version negotiation.
-- container/image logic first calls `NodeCli.GetNode(nodeId)` to get `DockerApiUrl`, then calls the SDK.
+- container/image logic gets its Docker client through `app/node/rpc/nodeclient.Docker(ctx, nodeCli, nodeId)`. That helper queries node-rpc, then builds the client. A missing node becomes `NotFound`; node-rpc outages keep their own code (`Unavailable`, etc.), so they are not reported as "node not found".
+- Convert Docker SDK errors with `dockerx.ToStatus(err)`. The SDK wraps daemon errors, so always classify them with `errdefs.IsNotFound`/`IsConflict`/..., never with type assertions on the outer error or with message string matching.
+- `ImagePull` returns HTTP 200 even when the pull fails. The failure arrives as an `{"error": ...}` message inside the progress stream, so the stream must be checked.
+- The node health check uses the SDK's `Ping`/`ServerVersion`, so both `tcp://` and `unix://` addresses work. The Windows build of the Docker SDK does not support `unix://`, so that test is skipped on Windows. Run it on Linux/WSL by cross-compiling the test binary (`GOOS=linux go test -c`).
 - RPC services return gRPC `status` codes. The gateway (`app/gateway/gateway.go`) maps them, plus `errorx.StatusError`, to `{code, msg}` JSON bodies with an HTTP status derived from the `pkg/errorx` business codes.
 
+### Testing helpers
+- `pkg/dockerx/dockertest.NewServer(t, routes)` starts a minimal fake Docker API. `/_ping` is built in, routes are keyed by `"METHOD /path"` without the version prefix, and unmatched requests get a Docker-style 404.
+- `app/node/rpc/nodeclient/nodetest` provides a fake `NodeClient`. `nodetest.At(addr)` returns node 1 pointing at `addr`; set `Err` to simulate node-rpc failures.
+- Fake gRPC clients embed the generated client interface and override only the methods the test needs (see `app/gateway/internal/logic/dashboard_test.go`).
+- Logic tests for user-rpc and node-rpc use a real SQLite file under `t.TempDir()`. Close `DB.DB()` in a `t.Cleanup`, otherwise Windows cannot delete the locked file.
+- go-zero's JWT middleware parses tokens with `jwt.WithJSONNumber()`, so numeric claims read from `ctx` (for example `uid`) are `json.Number`, not `float64`.
+
 ### Gateway (`app/gateway`)
-go-zero `rest` server. Routes are registered by hand in `internal/handler/handlers.go`, not generated from a `.api` file. `/api/health` and `/api/auth/*` are public; everything else is behind JWT (`Auth.AccessSecret`). Resources are nested by node: `/api/nodes/:nodeId/containers/...` and `/api/nodes/:nodeId/images/...`. `/api/dashboard` aggregates counts across services.
+go-zero `rest` server. Routes are registered by hand in `internal/handler/handlers.go`, not generated from a `.api` file. `/api/health` and `/api/auth/*` are public; everything else is behind JWT (`Auth.AccessSecret`). Resources are nested by node: `/api/nodes/:nodeId/containers/...` and `/api/nodes/:nodeId/images/...`. `/api/dashboard` aggregates counts across services. It queries every node's containers and images concurrently (`mr.FinishVoid`), and a failing node only sets that node's `error` field.
 
 ### mock-dockerd (`package main`, stdlib `net/http` only)
 - `router.go` strips the `/vX.Y/` version prefix the SDK adds, then dispatches by hand on `/containers/{id}/{action}` and `/images/{name}`.

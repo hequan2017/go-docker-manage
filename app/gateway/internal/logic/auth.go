@@ -3,6 +3,7 @@ package logic
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -76,16 +77,20 @@ func (l *AuthLogic) UserInfo() (*types.UserInfoResp, error) {
 	}, nil
 }
 
-// uidFromCtx 从 JWT claims(由 rest 中间件写入 ctx)取用户 ID
+// uidFromCtx 从 JWT claims(由 rest 中间件写入 ctx)取用户 ID。
+// go-zero 用 jwt.WithJSONNumber() 解析令牌,数字 claim 实际是 json.Number。
 func uidFromCtx(ctx context.Context) (int64, error) {
 	switch v := ctx.Value("uid").(type) {
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			return n, nil
+		}
 	case float64:
 		return int64(v), nil
 	case int64:
 		return v, nil
 	case int:
 		return int64(v), nil
-	default:
-		return 0, errorx.New(errorx.CodeUnauthorized, "令牌中缺少用户信息")
 	}
+	return 0, errorx.New(errorx.CodeUnauthorized, "令牌中缺少用户信息")
 }

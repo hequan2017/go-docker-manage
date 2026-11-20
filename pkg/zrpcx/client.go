@@ -3,6 +3,8 @@
 package zrpcx
 
 import (
+	"sync"
+
 	"github.com/hequan2017/go-docker-manage/pkg/nacosx"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/zrpc"
@@ -26,16 +28,13 @@ func NewClient(u Upstream, nacos nacosx.Config) zrpc.Client {
 	return zrpc.MustNewClient(zrpc.RpcClientConf{Endpoints: u.Endpoints, Timeout: u.Timeout, NonBlock: true})
 }
 
-var resolverOnce bool
+// resolverOnce 保证进程内只注册一次 nacos:// resolver(并发调用 NewClient 也安全)
+var resolverOnce sync.Once
 
 func initNacosResolver(nacos nacosx.Config) {
-	if resolverOnce {
-		return
-	}
-	nc, err := nacosx.NewNamingClient(nacos)
-	if err != nil {
+	resolverOnce.Do(func() {
+		nc, err := nacosx.NewNamingClient(nacos)
 		logx.Must(err)
-	}
-	nacosx.RegisterResolver(nc, nacos)
-	resolverOnce = true
+		nacosx.RegisterResolver(nc, nacos)
+	})
 }

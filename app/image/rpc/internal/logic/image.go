@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/client"
 	"github.com/hequan2017/go-docker-manage/app/image/rpc/internal/svc"
 	"github.com/hequan2017/go-docker-manage/app/image/rpc/pb"
+	"github.com/hequan2017/go-docker-manage/app/node/rpc/nodeclient"
 	nodepb "github.com/hequan2017/go-docker-manage/app/node/rpc/pb"
 	"github.com/hequan2017/go-docker-manage/pkg/dockerx"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -28,29 +29,19 @@ func NewImageLogic(ctx context.Context, svcCtx *svc.ServiceContext) *ImageLogic 
 	return &ImageLogic{ctx: ctx, svcCtx: svcCtx, Logger: logx.WithContext(ctx)}
 }
 
-func (l *ImageLogic) nodeOf(nodeId int64) (*nodepb.NodeInfo, error) {
-	resp, err := l.svcCtx.NodeCli.GetNode(l.ctx, &nodepb.GetNodeReq{Id: nodeId})
-	if err != nil {
-		if st, ok := status.FromError(err); ok {
-			return nil, status.Errorf(codes.NotFound, "节点不存在: %s", st.Message())
-		}
-		return nil, err
-	}
-	return resp.Node, nil
+// docker 查询节点并返回其 Docker 客户端(错误已转为 gRPC status)
+func (l *ImageLogic) docker(nodeId int64) (*nodepb.NodeInfo, *client.Client, error) {
+	return nodeclient.Docker(l.ctx, l.svcCtx.NodeCli, nodeId)
 }
 
 func (l *ImageLogic) ListImages(in *pb.ListImagesReq) (*pb.ListImagesReply, error) {
-	node, err := l.nodeOf(in.NodeId)
+	_, cli, err := l.docker(in.NodeId)
 	if err != nil {
 		return nil, err
 	}
-	cli, err := dockerx.New(node.DockerApiUrl)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "Docker API 地址无效: %v", err)
-	}
 	images, err := cli.ImageList(l.ctx, image.ListOptions{})
 	if err != nil {
-		return nil, status.Errorf(codes.Unavailable, "查询镜像列表失败: %v", err)
+		return nil, dockerx.ToStatus(err)
 	}
 	reply := &pb.ListImagesReply{}
 	for _, img := range images {
@@ -64,67 +55,64 @@ func (l *ImageLogic) ListImages(in *pb.ListImagesReq) (*pb.ListImagesReply, erro
 	return reply, nil
 }
 
+// pullMessage Docker 拉取进度流中的一条消息;失败时 HTTP 仍为 200,错误放在 error 字段
+type pullMessage struct {
+	Status string `json:"status"`
+	Error  string `json:"error"`
+}
+
 func (l *ImageLogic) PullImage(in *pb.PullImageReq) (*pb.PullImageReply, error) {
 	if in.Ref == "" {
 		return nil, status.Error(codes.InvalidArgument, "镜像名不能为空")
 	}
-	node, err := l.nodeOf(in.NodeId)
+	node, cli, err := l.docker(in.NodeId)
 	if err != nil {
 		return nil, err
 	}
-	cli, err := dockerx.New(node.DockerApiUrl)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "Docker API 地址无效: %v", err)
-	}
 	reader, err := cli.ImagePull(l.ctx, in.Ref, image.PullOptions{})
 	if err != nil {
-		return nil, status.Errorf(codes.Unavailable, "拉取镜像失败: %v", err)
+		return nil, dockerx.ToStatus(err)
 	}
 	defer reader.Close()
 
-	// 消费进度流直到 EOF,取最后一条状态
-	var statuses []string
+	// 消费进度流直到 EOF,遇到 error 消息立即失败,否则取最后一条状态
+	last := "拉取完成"
 	dec := json.NewDecoder(reader)
 	for {
-		var msg struct {
-			Status string `json:"status"`
-		}
+		var msg pullMessage
 		if err := dec.Decode(&msg); err != nil {
 			if err == io.EOF {
 				break
 			}
 			return nil, status.Errorf(codes.Internal, "读取拉取进度失败: %v", err)
 		}
-		if msg.Status != "" {
-			statuses = append(statuses, msg.Status)
+		if msg.Error != "" {
+			return nil, status.Errorf(codes.Aborted, "拉取镜像 %s 失败: %s", in.Ref, msg.Error)
 		}
-	}
-	last := "拉取完成"
-	if len(statuses) > 0 {
-		last = statuses[len(statuses)-1]
+		if msg.Status != "" {
+			last = msg.Status
+		}
 	}
 	l.Infof("image %s pulled on node %s: %s", in.Ref, node.Name, last)
 	return &pb.PullImageReply{Status: fmt.Sprintf("%s: %s", in.Ref, last)}, nil
 }
 
 func (l *ImageLogic) RemoveImage(in *pb.RemoveImageReq) (*pb.RemoveImageReply, error) {
-	node, err := l.nodeOf(in.NodeId)
+	_, cli, err := l.docker(in.NodeId)
 	if err != nil {
 		return nil, err
 	}
-	cli, err := dockerx.New(node.DockerApiUrl)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "Docker API 地址无效: %v", err)
-	}
 	resp, err := cli.ImageRemove(l.ctx, in.ImageRef, image.RemoveOptions{Force: in.Force})
 	if err != nil {
-		if strings.Contains(err.Error(), "No such image") {
+		st := status.Convert(dockerx.ToStatus(err))
+		switch st.Code() {
+		case codes.NotFound:
 			return nil, status.Errorf(codes.NotFound, "镜像 %s 不存在", in.ImageRef)
+		case codes.FailedPrecondition:
+			return nil, status.Errorf(codes.FailedPrecondition, "镜像被容器使用,需强制删除: %s", st.Message())
+		default:
+			return nil, st.Err()
 		}
-		if strings.Contains(err.Error(), "conflict") {
-			return nil, status.Errorf(codes.FailedPrecondition, "镜像被容器使用,需强制删除: %v", err)
-		}
-		return nil, status.Errorf(codes.Unavailable, "删除镜像失败: %v", err)
 	}
 	reply := &pb.RemoveImageReply{}
 	for _, r := range resp {

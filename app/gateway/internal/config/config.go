@@ -12,7 +12,7 @@ type Config struct {
 		AccessSecret string
 		AccessExpire int64 `json:",default=86400"`
 	}
-	Nacos nacosx.Config `json:",optional"`
+	Nacos     nacosx.Config `json:",optional"`
 	Upstreams struct {
 		UserRpc      zrpcx.Upstream `json:",optional"`
 		NodeRpc      zrpcx.Upstream `json:",optional"`

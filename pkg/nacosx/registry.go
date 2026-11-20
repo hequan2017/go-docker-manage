@@ -11,6 +11,27 @@ import (
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 )
 
+// MustRegister 把 listenOn 上的 gRPC 服务以 serviceName 注册到 Nacos,返回注销函数(供 defer 调用)。
+// Nacos 未启用(c.Empty())时什么也不做,返回 no-op。任何失败都直接退出进程(启动期使用)。
+func MustRegister(c Config, serviceName, listenOn string) (deregister func()) {
+	if c.Empty() {
+		return func() {}
+	}
+	port, err := ParseListenOn(listenOn)
+	if err != nil {
+		log.Fatalf("[nacosx] parse ListenOn: %v", err)
+	}
+	nc, err := NewNamingClient(c)
+	if err != nil {
+		log.Fatalf("[nacosx] create naming client: %v", err)
+	}
+	ip := LocalIP()
+	if err := RegisterService(nc, c, serviceName, ip, port); err != nil {
+		log.Fatalf("[nacosx] register %q: %v", serviceName, err)
+	}
+	return func() { DeregisterService(nc, c, serviceName, ip, port) }
+}
+
 // LocalIP 返回本机第一个非 loopback 的 IPv4 地址(容器内即容器 IP)
 func LocalIP() string {
 	addrs, err := net.InterfaceAddrs()

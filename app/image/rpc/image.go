@@ -4,7 +4,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 
 	"github.com/hequan2017/go-docker-manage/app/image/rpc/internal/config"
 	"github.com/hequan2017/go-docker-manage/app/image/rpc/internal/server"
@@ -32,20 +31,9 @@ func main() {
 	})
 	defer s.Stop()
 
-	if !c.Nacos.Empty() {
-		port, err := nacosx.ParseListenOn(c.ListenOn)
-		if err != nil {
-			log.Fatalf("parse ListenOn: %v", err)
-		}
-		nc, err := nacosx.NewNamingClient(c.Nacos)
-		if err != nil {
-			log.Fatalf("create nacos naming client: %v", err)
-		}
-		if err := nacosx.RegisterService(nc, c.Nacos, c.Name, nacosx.LocalIP(), port); err != nil {
-			log.Fatalf("register to nacos: %v", err)
-		}
-		defer nacosx.DeregisterService(nc, c.Nacos, c.Name, nacosx.LocalIP(), port)
-	}
+	// Nacos 注册中心:上报 gRPC 实例(未启用时为 no-op,便于本地直连调试)
+	deregister := nacosx.MustRegister(c.Nacos, c.Name, c.ListenOn)
+	defer deregister()
 
 	fmt.Printf("Starting rpc server at %s...\n", c.ListenOn)
 	s.Start()

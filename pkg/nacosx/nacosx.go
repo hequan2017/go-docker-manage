@@ -69,12 +69,12 @@ func (c Config) serverConfigs() []constant.ServerConfig {
 
 func (c Config) clientConfig() *constant.ClientConfig {
 	return &constant.ClientConfig{
-		NamespaceId:      c.NamespaceId,
-		TimeoutMs:        5000,
+		NamespaceId:         c.NamespaceId,
+		TimeoutMs:           5000,
 		NotLoadCacheAtStart: true,
-		LogLevel:         "error",
-		Username:         c.Username,
-		Password:         c.Password,
+		LogLevel:            "error",
+		Username:            c.Username,
+		Password:            c.Password,
 	}
 }
 

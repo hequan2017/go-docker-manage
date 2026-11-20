@@ -63,24 +63,6 @@ func httpStatusOf(code int) int {
 	}
 }
 
-func httpStatus(err error) int {
-	code, _ := classify(err)
-	switch code {
-	case errorx.CodeInvalidParam:
-		return http.StatusBadRequest
-	case errorx.CodeUnauthorized:
-		return http.StatusUnauthorized
-	case errorx.CodeNotFound:
-		return http.StatusNotFound
-	case errorx.CodeConflict:
-		return http.StatusConflict
-	case errorx.CodeRpcError:
-		return http.StatusBadGateway
-	default:
-		return http.StatusInternalServerError
-	}
-}
-
 // classify 错误 → (业务码, 消息)
 func classify(err error) (int, string) {
 	if se, ok := err.(*errorx.StatusError); ok {

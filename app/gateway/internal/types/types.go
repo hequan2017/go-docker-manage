@@ -76,9 +76,9 @@ type ContainerListReq struct {
 }
 
 type PortItem struct {
-	Host        string `json:"host"`
-	Container   string `json:"container"`
-	Protocol    string `json:"protocol"`
+	Host      string `json:"host"`
+	Container string `json:"container"`
+	Protocol  string `json:"protocol"`
 }
 
 type ContainerItem struct {
@@ -93,10 +93,10 @@ type ContainerItem struct {
 }
 
 type CreateContainerReq struct {
-	NodeId int64  `path:"nodeId"`
-	Name   string `json:"name,optional"`
-	Image  string `json:"image"`
-	Env    []string `json:"env,optional"`
+	NodeId int64         `path:"nodeId"`
+	Name   string        `json:"name,optional"`
+	Image  string        `json:"image"`
+	Env    []string      `json:"env,optional"`
 	Ports  []PortBinding `json:"ports,optional"`
 }
 

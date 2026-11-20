@@ -3,15 +3,13 @@ package logic
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"strings"
 	"time"
 
 	"github.com/hequan2017/go-docker-manage/app/node/rpc/internal/model"
 	"github.com/hequan2017/go-docker-manage/app/node/rpc/internal/svc"
 	"github.com/hequan2017/go-docker-manage/app/node/rpc/pb"
+	"github.com/hequan2017/go-docker-manage/pkg/dockerx"
 	"github.com/zeromicro/go-zero/core/logx"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -84,55 +82,34 @@ func (l *NodeLogic) DeleteNode(in *pb.DeleteNodeReq) (*pb.DeleteNodeReply, error
 	return &pb.DeleteNodeReply{}, nil
 }
 
-// HealthCheck 探测节点 Docker API:GET /_ping + GET /version,并回写状态
+// healthCheckTimeout 单次健康检查(_ping + version)的总超时
+const healthCheckTimeout = 3 * time.Second
+
+// HealthCheck 用 Docker SDK 探测节点(Ping + ServerVersion),并回写状态。
+// 走 SDK 而不是手拼 HTTP,tcp:// 与 unix:// 地址都支持。
 func (l *NodeLogic) HealthCheck(in *pb.HealthCheckReq) (*pb.HealthCheckReply, error) {
 	var n model.Node
 	if err := l.svcCtx.DB.First(&n, in.Id).Error; err != nil {
 		return nil, status.Errorf(codes.NotFound, "节点 %d 不存在", in.Id)
 	}
 
-	pingURL := dockerURLToHTTP(n.DockerApiUrl, "/_ping")
-	versionURL := dockerURLToHTTP(n.DockerApiUrl, "/version")
+	ctx, cancel := context.WithTimeout(l.ctx, healthCheckTimeout)
+	defer cancel()
 
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(pingURL)
 	newStatus, message, version := "unhealthy", "", ""
-	switch {
-	case err != nil:
-		message = fmt.Sprintf("连接失败: %v", err)
-	case resp.StatusCode != http.StatusOK:
-		message = fmt.Sprintf("_ping 返回 %d", resp.StatusCode)
-		_ = resp.Body.Close()
-	default:
-		_ = resp.Body.Close()
-		newStatus = "healthy"
-		message = "ok"
-		version = fetchDockerVersion(client, versionURL)
-	}
-	_ = l.svcCtx.DB.Model(&n).Update("status", newStatus).Error
-	return &pb.HealthCheckReply{Ok: newStatus == "healthy", Message: message, DockerVersion: version}, nil
-}
-
-// dockerURLToHTTP tcp://host:2375/path → http://host:2375/path(unix socket 不支持 HTTP 探测,返回原文)
-func dockerURLToHTTP(dockerURL, path string) string {
-	u := strings.TrimPrefix(dockerURL, "tcp://")
-	if dockerURL == u { // 非 tcp:// 前缀(unix:// 等),原样返回供错误展示
-		return dockerURL + path
-	}
-	return "http://" + u + path
-}
-
-func fetchDockerVersion(client *http.Client, url string) string {
-	resp, err := client.Get(url)
+	cli, err := dockerx.New(n.DockerApiUrl)
 	if err != nil {
-		return ""
+		message = fmt.Sprintf("Docker API 地址无效: %v", err)
+	} else if _, err := cli.Ping(ctx); err != nil {
+		message = fmt.Sprintf("连接失败: %v", err)
+	} else {
+		newStatus, message = "healthy", "ok"
+		if v, err := cli.ServerVersion(ctx); err == nil {
+			version = v.Version
+		}
 	}
-	defer resp.Body.Close()
-	var v struct {
-		Version string `json:"Version"`
+	if err := l.svcCtx.DB.Model(&n).Update("status", newStatus).Error; err != nil {
+		l.Errorf("update node %d status: %v", n.ID, err)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
-		return ""
-	}
-	return v.Version
+	return &pb.HealthCheckReply{Ok: newStatus == "healthy", Message: message, DockerVersion: version}, nil
 }

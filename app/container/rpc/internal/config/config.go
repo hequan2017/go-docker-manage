@@ -11,6 +11,6 @@ type Upstream = zrpcx.Upstream
 
 type Config struct {
 	zrpc.RpcServerConf
-	Nacos  nacosx.Config `json:",optional"`
-	NodeRpc Upstream     `json:",optional"`
+	Nacos   nacosx.Config `json:",optional"`
+	NodeRpc Upstream      `json:",optional"`
 }
